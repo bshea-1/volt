@@ -19,29 +19,30 @@ pub struct ComputedInfo {
     pub mask: u32, // Combined mask of root signals it depends on
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum TextPart {
-    Lit(String),
-    Expr(Expr),
+#[derive(Debug, Clone)]
+pub struct DynamicTextSlot {
+    pub state_slot: usize,
+    pub trigger_mask: u32,
+    pub expr: Expr,
 }
 
 #[derive(Debug, Clone)]
-pub struct DynamicTextPlan {
-    pub state_slot: usize,
-    pub target_elem_id: usize,
-    pub trigger_mask: u32,
-    pub parts: Vec<TextPart>,
+pub enum PlannedNodeKind {
+    Element {
+        tag: String,
+        static_attrs: Vec<(String, String)>,
+        events: Vec<(String, String)>,
+        static_text: Option<String>,
+    },
+    StaticText(String),
+    DynamicText(DynamicTextSlot),
 }
 
 #[derive(Debug, Clone)]
 pub struct PlannedElement {
     pub id: usize,
-    pub tag: String,
     pub parent_id: usize, // 0 is root passed into mount
-    pub static_attrs: Vec<(String, String)>,
-    pub events: Vec<(String, String)>, // (event_name, handler_name)
-    pub static_text: Option<String>,
-    pub dynamic_text: Option<DynamicTextPlan>,
+    pub kind: PlannedNodeKind,
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +62,9 @@ pub struct ReactivityAnalyzer;
 
 impl ReactivityAnalyzer {
     pub fn analyze_component(comp: &ComponentDecl) -> Result<ComponentPlan, String> {
+        let opt_comp = crate::analysis::optimizer::AstOptimizer::optimize_component(comp.clone());
+        let comp = &opt_comp;
+
         let mut signals = Vec::new();
         let mut signal_name_to_id = HashMap::new();
 
@@ -216,111 +220,109 @@ impl ReactivityAnalyzer {
                     events.push((ev.event_name.clone(), ev.handler.clone()));
                 }
 
-                // Check children: separate static text vs dynamic expressions vs child elements
-                let mut child_elements = Vec::new();
-                let mut text_parts = Vec::new();
-                let mut is_dynamic = false;
-                let mut trigger_mask = 0u32;
+                let has_dynamic = elem.children.iter().any(|c| matches!(c, TemplateNode::DynamicExpr(..)));
+                let has_child_elements = elem.children.iter().any(|c| matches!(c, TemplateNode::Element(..)));
 
-                for child in &elem.children {
-                    match child {
-                        TemplateNode::Element(child_elem) => {
-                            child_elements.push(child_elem);
-                        }
-                        TemplateNode::Text(txt, _) => {
-                            text_parts.push(TextPart::Lit(txt.clone()));
-                        }
-                        TemplateNode::DynamicExpr(expr, _) => {
-                            is_dynamic = true;
-                            let expr_mask = Self::calculate_mask_for_expr(expr, signals, computeds);
-                            trigger_mask |= expr_mask;
-                            text_parts.push(TextPart::Expr(expr.clone()));
-                        }
-                    }
-                }
-
-                let (static_text, dynamic_text) = if is_dynamic {
-                    let slot = *next_slot_id;
-                    *next_slot_id += 1;
-                    (
-                        None,
-                        Some(DynamicTextPlan {
-                            state_slot: slot,
-                            target_elem_id: elem_id,
-                            trigger_mask,
-                            parts: text_parts,
-                        }),
-                    )
-                } else if !text_parts.is_empty() {
+                if !has_dynamic && !has_child_elements {
+                    // Leaf element with only static text (e.g. <h2>"Title"</h2> or <button>"Increment"</button>)
                     let mut combined = String::new();
-                    for part in text_parts {
-                        if let TextPart::Lit(s) = part {
-                            combined.push_str(&s);
+                    for child in &elem.children {
+                        if let TemplateNode::Text(txt, _) = child {
+                            combined.push_str(txt);
                         }
                     }
-                    (Some(combined), None)
+                    let static_text = if combined.is_empty() { None } else { Some(combined) };
+                    elements.push(PlannedElement {
+                        id: elem_id,
+                        parent_id,
+                        kind: PlannedNodeKind::Element {
+                            tag: elem.tag.clone(),
+                            static_attrs,
+                            events,
+                            static_text,
+                        },
+                    });
                 } else {
-                    (None, None)
-                };
+                    // Element with child elements, dynamic expressions, or mixed content
+                    elements.push(PlannedElement {
+                        id: elem_id,
+                        parent_id,
+                        kind: PlannedNodeKind::Element {
+                            tag: elem.tag.clone(),
+                            static_attrs,
+                            events,
+                            static_text: None,
+                        },
+                    });
 
-                elements.push(PlannedElement {
-                    id: elem_id,
-                    tag: elem.tag.clone(),
-                    parent_id,
-                    static_attrs,
-                    events,
-                    static_text,
-                    dynamic_text,
-                });
-
-                // Recursively plan child elements
-                for child_elem in child_elements {
-                    Self::plan_template_node(
-                        &TemplateNode::Element(child_elem.clone()),
-                        elem_id,
-                        next_elem_id,
-                        next_slot_id,
-                        signals,
-                        computeds,
-                        elements,
-                    )?;
+                    // Plan children in exact source order
+                    for child in &elem.children {
+                        match child {
+                            TemplateNode::Element(child_elem) => {
+                                Self::plan_template_node(
+                                    &TemplateNode::Element(child_elem.clone()),
+                                    elem_id,
+                                    next_elem_id,
+                                    next_slot_id,
+                                    signals,
+                                    computeds,
+                                    elements,
+                                )?;
+                            }
+                            TemplateNode::Text(txt, _) => {
+                                let text_id = *next_elem_id;
+                                *next_elem_id += 1;
+                                elements.push(PlannedElement {
+                                    id: text_id,
+                                    parent_id: elem_id,
+                                    kind: PlannedNodeKind::StaticText(txt.clone()),
+                                });
+                            }
+                            TemplateNode::DynamicExpr(expr, _) => {
+                                let dyn_id = *next_elem_id;
+                                *next_elem_id += 1;
+                                let slot = *next_slot_id;
+                                *next_slot_id += 1;
+                                let mask = Self::calculate_mask_for_expr(expr, signals, computeds);
+                                elements.push(PlannedElement {
+                                    id: dyn_id,
+                                    parent_id: elem_id,
+                                    kind: PlannedNodeKind::DynamicText(DynamicTextSlot {
+                                        state_slot: slot,
+                                        trigger_mask: mask,
+                                        expr: expr.clone(),
+                                    }),
+                                });
+                            }
+                        }
+                    }
                 }
 
                 Ok(())
             }
             TemplateNode::Text(txt, _) => {
-                // Top level text or non-element text
-                let elem_id = *next_elem_id;
+                let text_id = *next_elem_id;
                 *next_elem_id += 1;
                 elements.push(PlannedElement {
-                    id: elem_id,
-                    tag: "span".into(),
+                    id: text_id,
                     parent_id,
-                    static_attrs: Vec::new(),
-                    events: Vec::new(),
-                    static_text: Some(txt.clone()),
-                    dynamic_text: None,
+                    kind: PlannedNodeKind::StaticText(txt.clone()),
                 });
                 Ok(())
             }
             TemplateNode::DynamicExpr(expr, _) => {
-                let elem_id = *next_elem_id;
+                let dyn_id = *next_elem_id;
                 *next_elem_id += 1;
                 let slot = *next_slot_id;
                 *next_slot_id += 1;
                 let mask = Self::calculate_mask_for_expr(expr, signals, computeds);
                 elements.push(PlannedElement {
-                    id: elem_id,
-                    tag: "span".into(),
+                    id: dyn_id,
                     parent_id,
-                    static_attrs: Vec::new(),
-                    events: Vec::new(),
-                    static_text: None,
-                    dynamic_text: Some(DynamicTextPlan {
+                    kind: PlannedNodeKind::DynamicText(DynamicTextSlot {
                         state_slot: slot,
-                        target_elem_id: elem_id,
                         trigger_mask: mask,
-                        parts: vec![TextPart::Expr(expr.clone())],
+                        expr: expr.clone(),
                     }),
                 });
                 Ok(())

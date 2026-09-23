@@ -14,7 +14,7 @@ impl DtsEmitter {
         out.push_str(&format!("export interface {}Exports {{\n", plan.name));
         out.push_str("  memory: WebAssembly.Memory;\n");
         out.push_str("  __table: WebAssembly.Table;\n");
-        out.push_str("  mount(rootId: number): void;\n");
+        out.push_str("  mount(root: HTMLElement | Node): void;\n");
 
         // Methods
         for method in &plan.methods {
@@ -51,12 +51,13 @@ impl DtsEmitter {
         out.push_str("}\n\n");
 
         out.push_str("export interface VoltDomImports {\n");
-        out.push_str("  createElement(tagPtr: number, tagLen: number): number;\n");
-        out.push_str("  createTextNode(textPtr: number, textLen: number): number;\n");
-        out.push_str("  setTextContent(nodeId: number, textPtr: number, textLen: number): void;\n");
-        out.push_str("  setAttribute(nodeId: number, namePtr: number, nameLen: number, valPtr: number, valLen: number): void;\n");
-        out.push_str("  appendChild(parentId: number, childId: number): void;\n");
-        out.push_str("  addEventListener(nodeId: number, eventPtr: number, eventLen: number, fnIdx: number): void;\n");
+        out.push_str("  createElement(tagPtr: number, tagLen: number): Element;\n");
+        out.push_str("  createTextNode(textPtr: number, textLen: number): Text;\n");
+        out.push_str("  setTextContent(node: Node, textPtr: number, textLen: number): void;\n");
+        out.push_str("  setTextNumber(node: Text, val: number): void;\n");
+        out.push_str("  setAttribute(node: Element, namePtr: number, nameLen: number, valPtr: number, valLen: number): void;\n");
+        out.push_str("  appendChild(parent: Node, child: Node): void;\n");
+        out.push_str("  addEventListener(node: Node, eventPtr: number, eventLen: number, fnIdx: number): void;\n");
         out.push_str("}\n\n");
 
         out.push_str("export interface VoltImports {\n");

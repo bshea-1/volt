@@ -1,0 +1,55 @@
+extern "js" {
+  fn logMetric(event: string, value: i32);
+}
+
+export component Counter {
+  signal count: i32 = 0;
+  signal step: i32 = 1;
+
+  computed doubled: i32 = count * 2;
+  computed quadruple: i32 = doubled * 2;
+
+  fn increment() {
+    count += step;
+    logMetric("count_updated", count);
+  }
+
+  fn decrement() {
+    count -= step;
+    logMetric("count_updated", count);
+  }
+
+  fn reset() {
+    count = 0;
+    logMetric("count_reset", 0);
+  }
+
+  render {
+    <div class="counter-card">
+      <div class="badge">"WASM-GC DIRECT REACTIVITY"</div>
+      <h2>"Volt Reactive Counter"</h2>
+      <p class="description">"Zero-overhead bitmask reactivity with direct externref DOM mutation"</p>
+      
+      <div class="stat-grid">
+        <div class="stat-item">
+          <span class="stat-label">"Current Count: "</span>
+          <span class="stat-val">{count}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">"Doubled (2x): "</span>
+          <span class="stat-val">{doubled}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">"Quadrupled (4x): "</span>
+          <span class="stat-val">{quadruple}</span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button @click=decrement class="btn-secondary">"- Decr"</button>
+        <button @click=increment class="btn-primary">"+ Incr"</button>
+        <button @click=reset class="btn-danger">"Reset"</button>
+      </div>
+    </div>
+  }
+}

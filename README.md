@@ -95,7 +95,7 @@ flowchart TD
     end
     
     subgraph Runtime["Browser Host Execution (< 1.5 KB Bootloader)"]
-        WasmBinary --> HostDOM["Direct DOM Pointer Updates (dom.setTextContent)"]
+        WasmBinary --> HostDOM["Direct DOM Updates (externref + dom.setTextNumber)"]
     end
 ```
 
@@ -217,7 +217,7 @@ Mount the compiled component into any web page using the Volt micro-bootloader:
 Start a development server with native WebAssembly MIME configurations:
 
 ```bash
-volt serve --port 3000 --dir .
+volt serve --port 3000 --dir examples
 ```
 
 ---

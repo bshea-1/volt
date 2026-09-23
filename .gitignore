@@ -1,5 +1,6 @@
 /target
 **/*.wasm
+!examples/*.wasm
 .DS_Store
 *.swp
 *.log
